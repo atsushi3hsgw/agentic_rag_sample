@@ -1,0 +1,8 @@
+langchain-core
+langchain-community
+langchain-openai
+langchain-pinecone
+langgraph
+pinecone-client[grpc]
+tavily-python
+pydantic

@@ -1,0 +1,12 @@
+.*
+work/
+*.log
+
+!.gitignore
+!.gitattributes
+!.env.example
+!.git/
+!.github/
+!.devcontainer/
+
+__pycache__/
