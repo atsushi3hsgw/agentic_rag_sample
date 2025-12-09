@@ -7,3 +7,4 @@ pinecone-client[grpc]
 tavily-python
 pydantic
 pytest
+pytest-mock

@@ -318,7 +318,7 @@ class AgenticRAG:
         # Collect sources from web_results
         if 'web_results' in result:
             for doc in result['web_results']:
-                source = doc.metadata.get('title', doc.metadata.get('url', ''))
+                source = doc.metadata.get('title', doc.metadata.get('title', ''))
                 if source:
                     sources.append(source)
         
