@@ -6,3 +6,4 @@ langgraph
 pinecone-client[grpc]
 tavily-python
 pydantic
+pytest

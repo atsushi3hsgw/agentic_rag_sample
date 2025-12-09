@@ -1,4 +1,4 @@
-from typing import TypedDict, List, Dict, Any
+from typing import TypedDict, List, Dict, Any, Optional
 from urllib.parse import unquote
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
@@ -50,9 +50,11 @@ ANS_USER = """
 {context}
 回答:"""
 
+from typing import Literal
+
 class DocRelevance(BaseModel):
     """Evaluation of document relevance."""
-    relevant: str = Field(description="'yes' if the document is relevant to the question (contains related keywords or meaning), 'no' otherwise.")
+    relevant: Literal["yes", "no"] = Field(description="'yes' if the document is relevant to the question, 'no' otherwise")
 
 class AgentState(TypedDict):
     question: str
@@ -62,11 +64,6 @@ class AgentState(TypedDict):
     web_query: str
     web_results: List[Document]
     answer: str
-
-
-class AgenticRAGError(Exception):
-    """Custom exception for AgenticRAG errors."""
-
 
 class AgenticRAG:
     def __init__(
@@ -115,13 +112,13 @@ class AgenticRAG:
         self.logger = logging.getLogger(__class__.__name__)
         self.logger.setLevel(log_level)
         
-        if not self.logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-            handler.setFormatter(formatter)
-            handler.setLevel(self.logger.level)
-            self.logger.addHandler(handler)
-        self.logger.propagate = False
+        # if not self.logger.handlers:
+        #     handler = logging.StreamHandler()
+        #     formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        #     handler.setFormatter(formatter)
+        #     handler.setLevel(self.logger.level)
+        #     self.logger.addHandler(handler)
+        # self.logger.propagate = False
         
         self._setup_prompts()
         self.graph = self._build_graph()
@@ -164,20 +161,34 @@ class AgenticRAG:
         return {"docs": docs}
     
     def evaluate_docs(self, state: AgentState) -> Dict[str, List[Document]]:
-        """Evaluate relevance of each doc using LLM (yes/no)."""
+        """Evaluate relevance of each doc using LLM (yes/no) using parallel processing."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         docs = state["docs"]
         relevant = []
-        for doc in docs:
-            chain = self.eval_prompt | self.llm.with_structured_output(DocRelevance)
-            resp = chain.invoke({
-                "document": doc.page_content,
-                "question": state["question"]
-            })
-            if resp.relevant == "yes":
-                relevant.append(doc)
+        max_workers = min(5, len(docs))  # Limit parallel requests to avoid rate limits
+
+        def _eval_doc(doc: Document) -> Optional[Document]:
+            try:
+                chain = self.eval_prompt | self.llm.with_structured_output(DocRelevance)
+                resp = chain.invoke({
+                    "document": doc.page_content,
+                    "question": state["question"]
+                })
+                return doc if resp.relevant == "yes" else None
+            except Exception as e:
+                self.logger.error(f"Document evaluation failed: {str(e)}")
+                return None
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_eval_doc, doc) for doc in docs]
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    relevant.append(result)
         
         if self.verbose_output:
-            self.logger.info(f"Document Evaluation: {len(relevant)}/{len(docs)} documents relevant")
+            self.logger.info(f"Document Evaluation (Parallel): {len(relevant)}/{len(docs)} documents relevant")
             for i, doc in enumerate(relevant, 1):
                 score = doc.metadata.get('score', 0)
                 content_preview = doc.page_content[:100].replace('\n', ' ') + '...' 
@@ -210,8 +221,12 @@ class AgenticRAG:
         if self.verbose_output:
             self.logger.info(f"Web Search : Query: {query}")
         
-        results = self.tavily.search(query, max_results=self.web_k).get("results", [])
-        
+        try:
+            results = self.tavily.search(query, max_results=self.web_k).get("results", [])
+        except Exception as e:
+            self.logger.error(f"Tavily search failed: {str(e)}")
+            results = []
+            
         web_docs = []
         for r in results:
             doc = Document(
@@ -222,7 +237,7 @@ class AgenticRAG:
                 }
             )
             web_docs.append(doc)
-        
+            
         if self.verbose_output:
             self.logger.info(f"Web Search: Retrieved {len(web_docs)} results")
             for i, doc in enumerate(web_docs, 1):
@@ -232,7 +247,7 @@ class AgenticRAG:
                 self.logger.info(f"[{i}/{len(web_docs)}] Title: {title}\nURL: {decoded_url}")
         
         return {"web_results": web_docs}
-    
+        
     def generate_answer(self, state: AgentState) -> Dict[str, str]:
         """Generate answer from relevant docs + web results."""
         relevant_docs = state.get("relevant_docs", [])

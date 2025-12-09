@@ -1,66 +1,99 @@
-# 📘Agentic RAG Sample
+# Agentic RAG Sample
 
-LangGraph × Pinecone × OpenRouter (OpenAI Embeddings) × Tavily を使用して構築した
-自律型（Agentic）RAG システム のサンプル実装です。
+LangGraph を用いた自律型 RAG（Agentic RAG / Adaptive RAG）の実装サンプルです。
 
-検索結果が不十分な場合は LLM が自律的に判断して Web 検索へ移行し、
-より正確な回答を生成することが特徴です。
+通常のRAGとは異なり、AIエージェントが「取得したドキュメントで回答可能か？」を自己評価し、情報が不足している場合は自動的に検索クエリを最適化してWeb検索（Tavily）を実行します。
 
-- Python で動作
+## 特徴
 
-- Pinecone に自動でインデックス作成
+*   **Adaptive Retrieval**: Pinecone上のベクトル検索結果をLLMが評価し、関連性が低い・不足していると判断した場合のみWeb検索を実行します。
+*   **Query Optimization**: Web検索が必要な場合、元の質問を検索エンジン向けに最適なクエリにリライトします。
+*   **LangGraph Implementation**: 状態管理と条件分岐（Retrieve → Evaluate → Loop/Fallback）をLangGraphで制御しています。
+*   **Parallel Document Evaluation**: ドキュメント評価時に並列処理(ThreadPool)を採用し、処理速度を最大5倍高速化
+*   **Dual-Source**: 社内ドキュメント（Pinecone）とWeb情報（Tavily）を統合して回答を生成します。
 
-- JSONL データをロードして自動チャンク＋ベクトル化
+## 前提条件
 
-- CLI で RAG 質問実行
+動作には以下のAPIキーが必要です。
 
-- LangGraph による Agentic フロー制御
+*   **OpenAI API Key**: 埋め込みモデル（Embeddings）およびLLM用
+*   **Pinecone API Key**: ベクトルデータベース用
+*   **Tavily API Key**: Web検索用
 
-- Mermaid でフロー図を可視化可能
+デフォルト設定では、LLM推論にOpenRouter（DeepSeekモデル）を使用するように構成されていますが、設定で変更可能です。
 
----
-## 📂 プロジェクト構成
+## インストール
 
+### 1. リポジトリのクローン
 ```bash
-src/
-├── rag/
-│   └── agentic_rag.py            # Agentic RAG のコア実装（LangGraph）
-└── cmd/
-    ├── load2vector_cli.py        # JSONL → Pinecone ベクトル登録ツール
-    └── agentic_rag_cli.py        # RAG 質問 CLI
+git clone https://github.com/atsushi3hsgw/agentic_rag_sample.git
+cd agentic_rag_sample
 ```
----
-## 🚀 機能
-### ✔ Agentic RAG
 
-- LLM による 関連性判定
+### 2. 依存パッケージのインストール
+```bash
+pip install -r requirements.txt
+pip install -e .
+```
+※ `pip install -e .` により `agentic-rag` コマンドが使用可能になります。
 
-- LLM による Web 検索の要否判断
+## 設定
 
-- 質問最適化による Web クエリ生成
+プロジェクトルートに `.env` ファイルを作成し、必要な環境変数を設定してください。
+`.env.example` を参考にしてください。
 
-- Pinecone + Tavily のハイブリッド検索
+```ini
+# .env
 
-### ✔ CLI から実行可能
+# 必須APIキー
+OPENAI_API_KEY=sk-...
+PINECONE_API_KEY=pc-...
+TAVILY_API_KEY=tvly-...
 
-- agentic_rag_cli.py により対話形式 QA
+# オプション（デフォルト値が設定されています）
+# LLM_MODEL=tngtech/deepseek-r1t2-chimera:free
+# BASE_URL=https://openrouter.ai/api/v1
+# PINECONE_INDEX_NAME=agentic-rag-index
+```
 
-- load2vector_cli.py により JSONL → Pinecone 自動登録
+## 使い方
 
-### ✔ LangGraph によるフロー制御
+### 1. データのインポート (Vector Store)
 
-メリット：
+まず、ドキュメントデータをPineconeへロードします。
+入力ファイルは **JSONL形式** で、各行に以下のフィールドを持つJSONが必要です。
 
-- ステップごとに明確な状態遷移
+```json
+{"id": "doc1", "title": "ドキュメントタイトル", "paragraphs": ["本文の段落1...", "本文の段落2..."]}
+```
 
-- 条件分岐しやすい
+**実行コマンド:**
+```bash
+python src/agentic_rag_sample/cmd/load2vector_cli.py path/to/data.jsonl
+```
 
-- Mermaid による可視化が容易
+このコマンドは自動的にテキストをチャンク分割し、Pineconeへベクトルとして保存します。インデックスが存在しない場合は自動作成されます。
 
----
-## 🧠 Agentic RAG フロー（LangGraph）
+### 2. 質問の実行 (RAG Agent)
 
-本システムは LangGraph によって次のように制御されています：
+エージェントに対して質問を行います。
+
+**コマンドラインツールとして実行:**
+```bash
+agentic-rag "ここに質問を入力してください"
+```
+または
+```bash
+python src/agentic_rag_sample/cmd/agentic_rag_cli.py "ここに質問を入力してください"
+```
+
+**オプション:**
+*   `--verbose`: 詳細なログを出力（デフォルトで有効）。検索スコアやWeb検索の実行有無などを確認できます。
+*   `--dump_graph`: 処理フロー（LangGraph）をMermaid形式で出力して終了します。
+
+## アーキテクチャ
+
+本システムは以下のステートマシン（Graph）で動作します。
 
 ```mermaid
 graph TD;
@@ -84,138 +117,23 @@ graph TD;
         classDef first fill-opacity:0
         classDef last fill-opacity:0
 ```
----
 
-## 🔍 各ステップの説明
+## ディレクトリ構成
 
-1. retrieve（ベクトル検索）
-
-    Pinecone から関連ドキュメントを取得。
-
-2. evaluate_docs（評価）
-
-    LLM（構造化出力）で「本当に関連あるか」を Yes/No で判定。
-
-3. should_web_search（Web 検索要否）
-
-    - ドキュメントが不足している
-
-    - 外部情報が必要
-
-    と判断すれば optimize_query に遷移。
-    不要なら generate_answer へ直接進む。
-
-4. optimize_query（質問最適化）
-
-    Web 検索向けにクエリを LLM が変換。
-
-5. web_search（外部検索）
-
-    Tavily API でインターネット検索し、結果を Document 化。
-
-6. generate_answer（最終回答）
-
-    関連ドキュメントと Web 結果を統合し、
-    信頼性の高い最終回答を生成。
-
----
-## 🛠 セットアップ
-
-1. 依存パッケージインストール
-
-```bash
-pip install -r requirements.txt
+```text
+.
+├── .env.example                # 環境変数のサンプル
+├── pyproject.toml              # プロジェクト定義
+├── requirements.txt            # 依存ライブラリ
+└── src/
+    └── agentic_rag_sample/
+        ├── cmd/
+        │   ├── agentic_rag_cli.py  # RAG実行用CLI
+        │   └── load2vector_cli.py  # データロード用CLI
+        └── rag/
+            └── agentic_rag.py      # LangGraphによるRAGロジック本体
 ```
 
-2. 環境変数の設定（.env）
+## ライセンス
 
-```bash
-OPENAI_API_KEY=xxxx
-PINECONE_API_KEY=xxxx
-TAVILY_API_KEY=xxxx
-
-PINECONE_INDEX_NAME=agentic-rag-index
-BASE_URL=https://openrouter.ai/api/v1
-LLM_MODEL=tngtech/deepseek-r1t2-chimera:free
-EMBEDDING_MODEL=openai/text-embedding-3-small
-
-SCORE_THRESHOLD=0.3
-K=5
-WEB_K=3
-
-CHUNK_SIZE=2000
-CHUNK_OVERLAP=300
-```
-
----
-## 📥 JSONL → Pinecone への登録（load2vector_cli）
-
-### JSONL 形式
-```json
-{"id": "001", "title": "サンプル文書", "paragraphs": ["文章1", "文章2", "文章3"]}
-{"id": "002", "title": "別の文書", "paragraphs": ["内容A", "内容B"]}
-```
-
-### 実行
-
-```bash
-python src/cmd/load2vector_cli.py data/articles.jsonl
-```
-
-（インデックスが無ければ自動作成）
-
----
-### ❓ RAG 質問実行（agentic_rag_cli）
-
-```bash
-python src/cmd/agentic_rag_cli.py "LLM はどのように学習されますか？"
-```
----
-#### オプション例
-
---k 8
---web_k 5
---score_threshold 0.25
---log_level DEBUG
---no-verbose
-
----
-### 📊 LangGraph フロー図だけ出力する
-
-```bash
-python src/cmd/agentic_rag_cli.py --dump_graph
-```
-
-README に貼れる Mermaid が生成されます。
-
----
-### 📜 サンプル出力
-
-```bash
-Answer:
-LLM（大規模言語モデル）は大量のテキストデータを学習し...
-
-Sources:
-- サンプル文書
-- https://example.com/llm
-```
-
----
-
-### 🧭 今後の拡張アイデア
-
-- 🔥 Retrieval のフィードバックループ追加
-
-- 🧪 Web 結果の信頼度分析
-
-- 🧱 ローカル LLM モデル対応
-
-- 🧩 マルチエージェント化
-
-- 📎 PDF / Web ページ自動 ingestion
-
----
-
-## ⭐️ ライセンス
-
-MIT License（必要なら変更可能）
+本プロジェクトはフリーライセンスです。自由にご利用いただけます。
