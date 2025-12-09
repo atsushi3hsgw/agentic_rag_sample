@@ -4,10 +4,7 @@ import logging
 import sys
 from dotenv import load_dotenv
 
-# Add project root to path for module resolution
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-from src.rag.agentic_rag import AgenticRAG
+from agentic_rag_sample.rag import AgenticRAG
 
 def setup_logging(log_level: str):
     """Set up logging configuration"""
