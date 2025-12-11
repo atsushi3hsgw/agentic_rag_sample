@@ -111,15 +111,7 @@ class AgenticRAG:
         
         self.logger = logging.getLogger(__class__.__name__)
         self.logger.setLevel(log_level)
-        
-        # if not self.logger.handlers:
-        #     handler = logging.StreamHandler()
-        #     formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        #     handler.setFormatter(formatter)
-        #     handler.setLevel(self.logger.level)
-        #     self.logger.addHandler(handler)
-        # self.logger.propagate = False
-        
+                
         self._setup_prompts()
         self.graph = self._build_graph()
     
@@ -165,8 +157,11 @@ class AgenticRAG:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         docs = state["docs"]
+        if len(docs) == 0:
+            return {"relevant_docs": []}
+        
         relevant = []
-        max_workers = min(5, len(docs))  # Limit parallel requests to avoid rate limits
+        max_workers = min(5, len(docs))
 
         def _eval_doc(doc: Document) -> Optional[Document]:
             try:
@@ -180,12 +175,15 @@ class AgenticRAG:
                 self.logger.error(f"Document evaluation failed: {str(e)}")
                 return None
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(_eval_doc, doc) for doc in docs]
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    relevant.append(result)
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = [executor.submit(_eval_doc, doc) for doc in docs]
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result:
+                        relevant.append(result)
+        except Exception as e:
+            self.logger.error(f"Document evaluation process failed: {str(e)}")
         
         if self.verbose_output:
             self.logger.info(f"Document Evaluation (Parallel): {len(relevant)}/{len(docs)} documents relevant")
@@ -207,8 +205,13 @@ class AgenticRAG:
         """Optimize question for web search using LLM."""
         chain = self.opt_prompt | self.llm | StrOutputParser()
         original_question = state["question"]
-        resp = chain.invoke({"question": original_question})
-        optimized = resp.strip()
+        try:
+            resp = chain.invoke({"question": original_question})
+            # Ensure response is string type
+            optimized = resp.strip() if isinstance(resp, str) else original_question
+        except Exception as e:
+            self.logger.error(f"Query optimization failed: {str(e)}")
+            optimized = original_question  # Fallback to original question
         
         if self.verbose_output:
             self.logger.info(f"Query Optimization:\nOriginal: {original_question}\nOptimized: {optimized}")
@@ -258,10 +261,14 @@ class AgenticRAG:
         context = "\n\n".join(all_contents) if all_contents else "No relevant context available."
         
         chain = self.ans_prompt | self.llm | StrOutputParser()
-        resp = chain.invoke({
-            "question": state["question"],
-            "context": context
-        })
+        try:
+            resp = chain.invoke({
+                "question": state["question"],
+                "context": context
+            })
+        except Exception as e:
+            self.logger.error(f"Answer generation failed: {str(e)}")
+            resp = "回答を生成できませんでした。"
         self.logger.debug(f"TRACE generate_answer: Generated answer (len={len(resp)}): {resp[:100]}...")
         return {"answer": resp.strip()}
     
@@ -298,6 +305,9 @@ class AgenticRAG:
     
     def __call__(self, question: str) -> AgentState:
         """Run the agentic RAG pipeline."""
+        if not question.strip():
+            raise ValueError("質問文が空です")
+        
         initial_state = {"question": question}
         result = self.graph.invoke(initial_state)
         return result
